@@ -91,15 +91,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  //TASK1
-  //int x = 42;
-  //float y = 3.14;
-  
-  int a=5;
-  int b=7;
-
-  int LHS=(a+b)*(a+b);
-  int RHS=(a*a)+(b*b)+(2*a*b);
+  int x = 42;
+  float y = 3.14;
 
   /* USER CODE END 1 */
 
@@ -136,21 +129,7 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-    //TASK1
-    //myPrintf("Value of x= %d,y= %.2f \r\n", x, y);
-    myPrintf("Verifying identity (a + b)^2 = a^2 + 2ab + b^2\r\n");
-    myPrintf("a = %d, b = %d\r\n", a, b);
-    myPrintf("LHS = %d\r\n", LHS);
-    myPrintf("RHS = %d\r\n", RHS);
-
-    if (LHS == RHS)
-    {
-        myPrintf("Result: Identity holds \r\n");
-    }
-    else
-    {
-        myPrintf("Result: Identity does NOT hold \r\n");
-    }
+    myPrintf("Value of x= %d,y= %.2f \r\n", x, y);
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */

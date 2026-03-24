@@ -1,0 +1,39 @@
+import serial
+import matplotlib.pyplot as plt
+
+# === Setup Serial ===
+sinWaveData = serial.Serial('/dev/ttyUSB0', 115200, timeout=1)
+plt.ion()
+
+tempValues = []
+time_ms = []
+cnt = 0
+
+plt.figure()
+
+while True:
+    if sinWaveData.in_waiting > 0:
+        try:
+            line = sinWaveData.readline().decode().strip()
+            temperature = int(line)
+
+            tempValues.append(temperature)
+            time_ms.append(cnt)
+            cnt += 1
+
+            plt.clf()
+            plt.title("Live Temperature Plot")
+            plt.xlabel("Time (ms)")
+            plt.ylabel("Temperature (°C)")
+            plt.grid(True)
+            plt.plot(time_ms, tempValues, 'r.-')
+
+            plt.pause(0.01)
+
+            # Keep last 500 samples
+            if len(tempValues) > 500:
+                tempValues.pop(0)
+                time_ms.pop(0)
+
+        except:
+            pass

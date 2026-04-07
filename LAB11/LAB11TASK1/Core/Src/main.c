@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "stm32f3xx_hal.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -102,7 +103,7 @@ float offsetRoll = 0;
 float angle = 0.0f;
 
 // Sampling interval for 100 Hz
-float dt = 0.01f;
+float dt = 0.005f;
 
 // Interrupt flag
 volatile uint8_t imu_flag = 0;
@@ -156,13 +157,21 @@ void Read_LSM(void)
     int16_t y_raw = (int16_t)((data[3] << 8) | data[2]);
     int16_t z_raw = (int16_t)((data[5] << 8) | data[4]);
 
-    // Convert to g (3.9 mg/LSB)
-    accX = x_raw * 3.9f / 1000.0f;
-    accY = y_raw * 3.9f / 1000.0f;
-    accZ = z_raw * 3.9f / 1000.0f;
 
+    // Convert to g (3.9 mg/LSB)
+    // accX = x_raw * 3.9f / 1000.0f;
+    // accY = y_raw * 3.9f / 1000.0f;
+    // accZ = z_raw * 3.9f / 1000.0f;
+  accX = (x_raw-lsmOffset.accX) * 3.9f / 1000.0f;
+  accY = (y_raw-lsmOffset.accY) * 3.9f / 1000.0f;
+  accZ = (z_raw-lsmOffset.accZ) * 3.9f / 1000.0f;
+    
     // Roll angle (degrees)
     roll_deg = atan2f(accX, accZ) * 57.2958f;
+    //  float accX_corr = accX - lsmOffset.accX;
+    //  float accZ_corr = accZ - lsmOffset.accZ;
+
+    //  roll_deg = atan2f(accX_corr, accZ_corr) * 57.2958f;
 }
 void gyro_write(uint8_t reg, uint8_t value)
 {
@@ -202,6 +211,7 @@ uint8_t gyro_read(uint8_t reg)
 // }
 void OffsetLSM(void)
 {
+
     float sumAccX = 0, sumAccY = 0, sumAccZ = 0;
     float sumGyroX = 0, sumGyroY = 0, sumGyroZ = 0;
     int samples = 60;
@@ -232,9 +242,11 @@ void OffsetLSM(void)
     }
 
     // Store averages in struct
+    
     lsmOffset.accX = sumAccX / samples;
     lsmOffset.accY = sumAccY / samples;
-    lsmOffset.accZ = sumAccZ / samples;
+    //lsmOffset.accZ = sumAccZ / samples;
+    lsmOffset.accZ = (sumAccZ / samples);
 
     lsmOffset.gyroX = sumGyroX / samples;
     lsmOffset.gyroY = sumGyroY / samples;
@@ -286,7 +298,8 @@ int main(void)
   Init_LSM();
   gyro_init();
   //gyro_calibrate();
-OffsetLSM();
+  HAL_Delay(1000);
+  OffsetLSM();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Base_Start_IT(&htim2);
   char buffer[50];
@@ -311,8 +324,10 @@ OffsetLSM();
             float gx = (gx_raw * 0.00875f) - lsmOffset.gyroX;
 
             // ---- Complementary filter ----
-            angle = 0.98f * (angle + gx * dt) + 0.02f * roll_deg;
-
+           //
+           //  angle = 0.98f * (angle + gx * dt) + 0.02f * roll_deg;
+           //gyro y. acce x
+            angle = 0.98f * (angle + gx* dt) + 0.02f * roll_deg;
             // ---- Print CSV (roll_deg, gyro_rate, filtered angle) ----
             sprintf(buffer, "%0.2f,%0.2f,%0.2f\r\n", roll_deg, gx, angle);
             HAL_UART_Transmit(&huart2, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
@@ -438,7 +453,7 @@ static void MX_SPI1_Init(void)
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi1.Init.DataSize = SPI_DATASIZE_4BIT;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;

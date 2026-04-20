@@ -1,0 +1,6 @@
+/home/labt1/MCI-Labs/Lab7/build/CMakeFiles/Lab7.dir
+/home/labt1/MCI-Labs/Lab7/build/CMakeFiles/edit_cache.dir
+/home/labt1/MCI-Labs/Lab7/build/CMakeFiles/rebuild_cache.dir
+/home/labt1/MCI-Labs/Lab7/build/cmake/stm32cubemx/CMakeFiles/STM32_Drivers.dir
+/home/labt1/MCI-Labs/Lab7/build/cmake/stm32cubemx/CMakeFiles/edit_cache.dir
+/home/labt1/MCI-Labs/Lab7/build/cmake/stm32cubemx/CMakeFiles/rebuild_cache.dir

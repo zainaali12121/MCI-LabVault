@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/labt1/MCI-Labs/Lab7/build/Debug/cmake_install.cmake",
+		"/home/labt1/MCI-Labs/Lab7/build/Debug/cmake/stm32cubemx/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

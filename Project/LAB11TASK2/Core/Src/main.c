@@ -18,10 +18,10 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-
-#include <math.h>
-#include <stdio.h>
-#include <string.h>
+#include "imu_lsm.h"
+#include "gyro.h"
+#include "pid.h"
+#include "motor.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -56,75 +56,14 @@ PCD_HandleTypeDef hpcd_USB_FS;
 
 /* USER CODE BEGIN PV */
 
-#define CTRL_REG1      0x20
-#define CTRL_REG1_VAL  0b10001111   // Power ON, enable X,Y,Z
+extern TIM_HandleTypeDef htim2;
+extern TIM_HandleTypeDef htim3;
 
-#define CTRL_REG4      0x23
-#define CTRL_REG4_VAL  0b00000000   // ±245 dps
+extern UART_HandleTypeDef huart2;
 
-#define OUT_TEMP       0x26
-
-#define OUT_X_L        0x28
-#define OUT_X_H        0x29
-#define OUT_Y_L        0x2A
-#define OUT_Y_H        0x2B
-#define OUT_Z_L        0x2C
-#define OUT_Z_H        0x2D
-
-typedef struct {
-float accX;
-float accY;
-float accZ;
-
-float gyroX;
-float gyroY;
-float gyroZ;
-
-float roll;
-float pitch;
-} LSM_Offset_t;
-LSM_Offset_t lsmOffset;
-
-int16_t acc_rawX, acc_rawY, acc_rawZ;
-float accX, accY, accZ;
-float offsetAccX = 0;
-float offsetAccY = 0;
-float offsetAccZ = 0;
-float offsetGyroX = 0;
-float offsetGyroY = 0;
-float offsetGyroZ = 0;
-uint8_t gyroX, gyroY, gyroZ;
-
-
-float roll_deg = 0;
-float pitch_deg = 0;
-
-float offsetRoll = 0;
-
-float angle = 0.0f;
-
-// Sampling interval for 100 Hz
-float dt = 0.005f;
-
-// Interrupt flag
 volatile uint8_t imu_flag = 0;
-
-// // PID variables
-// float Ki = 0.1f; //TOO BIG MAKE THIS SMALLER FIRST
-
-// float Kp = 54.0f;
-// float Kd = 4.0f; // THEN MAKE THIS BIGGER 
-
-// PID variables
-float Ki = 0.0f; 
-float Kp = 57.0f;
-float Kd = 1.0f;
-
-
-float setpoint = 1.0f;
-float error = 0, prev_error = 0;
-float integral = 0, derivative = 0;
-float control = 0;
+float angle = 0;
+float dt = 0.005f;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -143,220 +82,44 @@ static void MX_USB_PCD_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-//--------------------Accelerometer-------------------------------
-//Initializes the accelerometer by writing configuration values over I2C to set its sample rate (100 Hz) 
-// apply default measurement settings so it can start producing motion data.
-void Init_LSM(void)
-{
-  uint8_t data;
-
-  // Example: Accelerometer CTRL_REG1_A = 0x20
-  data = 0x67; // 100 Hz, all axes enabled
-  HAL_I2C_Mem_Write(&hi2c1, 0x33, 0x20, I2C_MEMADD_SIZE_8BIT, &data, 1, HAL_MAX_DELAY);
-
-  data = 0x00; // Example: CTRL_REG4_A = 0x23
-  HAL_I2C_Mem_Write(&hi2c1, 0x33, 0x23, I2C_MEMADD_SIZE_8BIT, &data, 1, HAL_MAX_DELAY);
-}
-
-void Read_LSM(void)
-{
-    uint8_t data[6]; // 6 bye container
-
-    // Read 6 bytes from OUT_X_L_A (with auto-increment)
-    HAL_I2C_Mem_Read(&hi2c1, 0x33, 0x28 | 0x80,
-                     I2C_MEMADD_SIZE_8BIT, data, 6, HAL_MAX_DELAY);
-
-    int16_t x_raw = (int16_t)((data[1] << 8) | data[0]); //Joins two 8-bit values into one 16-bit number
-    int16_t y_raw = (int16_t)((data[3] << 8) | data[2]);
-    int16_t z_raw = (int16_t)((data[5] << 8) | data[4]);
-
-
-    // Convert to g (3.9 mg/LSB)
-    // accX = x_raw * 3.9f / 1000.0f;
-    // accY = y_raw * 3.9f / 1000.0f;
-    // accZ = z_raw * 3.9f / 1000.0f;
-    accX = (x_raw-lsmOffset.accX) * 3.9f / 1000.0f; //accelerometer gives LSB then *3.9 to get mg /1000 to get g
-    accY = (y_raw-lsmOffset.accY) * 3.9f / 1000.0f;
-    accZ = (z_raw-lsmOffset.accZ) * 3.9f / 1000.0f;
-    
-    // Roll angle (degrees)
-    roll_deg = atan2f(accX, accZ) * 57.2958f; //angle btw x and z
-    //  float accX_corr = accX - lsmOffset.accX;
-    //  float accZ_corr = accZ - lsmOffset.accZ;
-
-    //  roll_deg = atan2f(accX_corr, accZ_corr) * 57.2958f;
-}
-void gyro_write(uint8_t reg, uint8_t value)
-{
-  uint8_t tx[2] = {reg, value};
-
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);   // CS LOW
-  HAL_SPI_Transmit(&hspi1, tx, 2, HAL_MAX_DELAY);
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);     // CS HIGH
-}
-
-void gyro_init()
-{
-  gyro_write(CTRL_REG1, CTRL_REG1_VAL);
-  gyro_write(CTRL_REG4, CTRL_REG4_VAL);
-}
-
-//reads a single register value from the gyro using SPI
-uint8_t gyro_read(uint8_t reg)
-{
-  uint8_t tx = reg | 0x80;  // Read bit = 1
-  uint8_t rx;
-
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_RESET);  // CS LOW
-  HAL_SPI_Transmit(&hspi1, &tx, 1, HAL_MAX_DELAY);
-  HAL_SPI_Receive(&hspi1, &rx, 1, HAL_MAX_DELAY);
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_3, GPIO_PIN_SET);    // CS HIGH
-
-  return rx;
-}
-
-void OffsetLSM(void)
-{
-
-    float sumAccX = 0, sumAccY = 0, sumAccZ = 0;
-    float sumGyroX = 0, sumGyroY = 0, sumGyroZ = 0;
-    int samples = 60;
-
-    for(int i = 0; i < samples; i++)
-    {
-        // Read raw accelerometer
-        uint8_t data[6];
-        HAL_I2C_Mem_Read(&hi2c1, 0x33, 0x28 | 0x80, I2C_MEMADD_SIZE_8BIT, data, 6, HAL_MAX_DELAY);
-        int16_t rawX = (int16_t)((data[1] << 8) | data[0]);
-        int16_t rawY = (int16_t)((data[3] << 8) | data[2]);
-        int16_t rawZ = (int16_t)((data[5] << 8) | data[4]);
-
-        sumAccX += rawX * 3.9f / 1000.0f;
-        sumAccY += rawY * 3.9f / 1000.0f;
-        sumAccZ += rawZ * 3.9f / 1000.0f;
-
-        // Read raw gyro
-        int16_t gx_raw = (int16_t)((gyro_read(OUT_X_H) << 8) | gyro_read(OUT_X_L));
-        int16_t gy_raw = (int16_t)((gyro_read(OUT_Y_H) << 8) | gyro_read(OUT_Y_L));
-        int16_t gz_raw = (int16_t)((gyro_read(OUT_Z_H) << 8) | gyro_read(OUT_Z_L));
-
-        sumGyroX += gx_raw * 0.00875f;
-        sumGyroY += gy_raw * 0.00875f;
-        sumGyroZ += gz_raw * 0.00875f;
-
-        HAL_Delay(50);
-    }
-
-    // Store averages in struct
-    lsmOffset.accX = sumAccX / samples;
-    lsmOffset.accY = sumAccY / samples;
-    lsmOffset.accZ = (sumAccZ / samples);
-
-    lsmOffset.gyroX = sumGyroX / samples;
-    lsmOffset.gyroY = sumGyroY / samples;
-    lsmOffset.gyroZ = sumGyroZ / samples;
-}
-
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if(htim->Instance == TIM2)
     {
         imu_flag = 1;
 
-        // ---- Read sensors ----
         Read_LSM();
-      
+
         int16_t gy_raw = (int16_t)((gyro_read(0x2B) << 8) | gyro_read(0x2A));
-        //int16_t gy_raw = (int16_t)((gyro_read(0x29) << 8) | gyro_read(0x28));
         float gy = (gy_raw * 0.00875f) - lsmOffset.gyroY;
 
-        // ---- Complementary filter ----
         angle = 0.98f * (angle + gy * dt) + 0.02f * roll_deg;
 
-        // ---- SAFETY: if tilt too large, stop motors ----
-        if (fabs(angle) > 90.0f)
+        if(fabs(angle) > 90.0f)
         {
-            integral = 0;   // reset integral
+            integral = 0;
             control = 0;
 
             __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
             __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 0);
 
-            return; // skip PID
+            return;
         }
-        // ---- PID ----
+
         error = angle - setpoint;
 
-        // ---- SETPOINT REACHED INDICATOR ----
-        if (fabs(error) < 1.0f)   // tolerance band (adjust if needed)
+        if(fabs(error) < 1.0f)
         {
-            HAL_GPIO_WritePin(GPIOE, LD4_Pin, GPIO_PIN_SET);   // LED ON
+            HAL_GPIO_WritePin(GPIOE, LD4_Pin, GPIO_PIN_SET);
         }
         else
         {
-            HAL_GPIO_WritePin(GPIOE, LD4_Pin, GPIO_PIN_RESET); // LED OFF
-        }
-        /* DEADZONE (ADD HERE) */
-      if (fabs(error) < 0.02f)
-      {
-          control = 0;
-          integral = 0;   // optional but recommended
-          prev_error = 0;
-
-          __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
-          __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 0);
-
-          return;   // skip rest of control loop
-      }
-
-
-        integral += error * dt;
-
-        // Clamp integral
-        if(integral > 50) integral = 50;
-        if(integral < -50) integral = -50;
-        derivative = (error - prev_error) / dt;
-
-        control = Kp*error + Ki*integral + Kd*derivative;
-
-        // Clamp control
-        if(control > 1000) control = 1000;
-        if(control < -1000) control = -1000;
-        prev_error = error;
-
-        // ---- MOTOR CONTROL ----
-        if(control > 0) // forward
-        {
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, 1);
-            HAL_GPIO_WritePin(GPIOD, GPIO_PIN_8, 0);
-
-            HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, 1);
-            HAL_GPIO_WritePin(GPIOD, GPIO_PIN_7, 0);
-        }
-        else // reverse
-        {
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, 0);
-            HAL_GPIO_WritePin(GPIOD, GPIO_PIN_8, 1);
-
-            HAL_GPIO_WritePin(GPIOD, GPIO_PIN_6, 0);
-            HAL_GPIO_WritePin(GPIOD, GPIO_PIN_7, 1);
+            HAL_GPIO_WritePin(GPIOE, LD4_Pin, GPIO_PIN_RESET);
         }
 
-        // PWM magnitude (ABS)
-        int pwm = (int)fabs(control);
-        if(pwm > 600) pwm = 600;
-        //  DEADZONE FIX
-        if(pwm > 0 && pwm < 120)
-            pwm = 120;
+        float control = PID_Compute(angle, dt);
 
-        
-        static float pwm_filtered = 0;
-        pwm_filtered = 0.8f * pwm_filtered + 0.2f * pwm;
-        pwm = pwm_filtered;
-
-        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pwm*2);
-        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, pwm);
-       // PWM magnitude (ABS)
+        Motor_Set(control);
     }
 }
 /* USER CODE END 0 */

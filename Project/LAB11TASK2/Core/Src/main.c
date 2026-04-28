@@ -62,8 +62,9 @@ extern TIM_HandleTypeDef htim3;
 extern UART_HandleTypeDef huart2;
 
 volatile uint8_t imu_flag = 0;
-float angle = 0;
-float dt = 0.005f;
+float angle = 0;   //initializing tilt angle 
+float dt = 0.005f;   //sampling time for 100 Hz control loop
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -81,33 +82,45 @@ static void MX_USB_PCD_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+// Execute control loop only for TIM2 interrupt (100 Hz)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if(htim->Instance == TIM2)
     {
         imu_flag = 1;
-
+        // Read accelerometer data from LSM IMU
         Read_LSM();
-
+        // Read raw gyroscope Y-axis data (high + low bytes)
         int16_t gy_raw = (int16_t)((gyro_read(0x2B) << 8) | gyro_read(0x2A));
+     
+        // Convert raw gyro data to degrees/sec and remove offset
         float gy = (gy_raw * 0.00875f) - lsmOffset.gyroY;
 
+       // Complementary filter:
+       // Gyroscope provides short-term accuracy but drifts over time.
+       // Accelerometer provides long-term stability but is noisy.
+       // This filter blends both to get a stable angle estimate.
+       
+       // Combines gyro integration + accelerometer
         angle = 0.98f * (angle + gy * dt) + 0.02f * roll_deg;
 
+        // Safety check: if robot tilts too much, stop motors
         if(fabs(angle) > 90.0f)
         {
-            integral = 0;
-            control = 0;
+            integral = 0;     // Reset PID integral term
+            control = 0;      // Stop control signal
 
+            // Set motor PWM to zero (stop motors)
             __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0);
             __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 0);
 
             return;
         }
 
+        // Compute error between current angle and desired upright position
         error = angle - setpoint;
 
+        // LED indicator: ON when near upright (within ±1 degree)
         if(fabs(error) < 1.0f)
         {
             HAL_GPIO_WritePin(GPIOE, LD4_Pin, GPIO_PIN_SET);
@@ -117,8 +130,10 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
             HAL_GPIO_WritePin(GPIOE, LD4_Pin, GPIO_PIN_RESET);
         }
 
+        // Compute PID control output based on current angle
         float control = PID_Compute(angle, dt);
-
+     
+        // Send control signal to motors
         Motor_Set(control);
     }
 }
@@ -161,11 +176,14 @@ int main(void)
   MX_USB_PCD_Init();
   /* USER CODE BEGIN 2 */
 
-  Init_LSM();
-  gyro_init();
-  OffsetLSM();
+  Init_LSM();    // Accelerometer
+  gyro_init();   // Gyroscope
+  OffsetLSM();     // Calibrate IMU to remove bias
 
-  HAL_TIM_Base_Start_IT(&htim2);     // 100 Hz loop
+  // Start timer interrupt, drives control loop (100 Hz)
+  HAL_TIM_Base_Start_IT(&htim2);
+
+  // Start PWM signals for motor control
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
 
